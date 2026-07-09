@@ -5,16 +5,32 @@ import { slugify } from '../common/slug';
 import { User, UserDocument } from './user.schema';
 import { UpdateMeDto } from './dto/update-me.dto';
 
-type CreateUserInput = {
+export type CreateUserInput = {
   name: string;
-  firstName?: string;
-  lastName?: string;
+  firstName: string;
+  lastName: string;
   email: string;
-  passwordHash: string;
   phone?: string;
-  country?: string;
-  role?: 'admin' | 'member';
+  country: string;
+  passwordHash: string;
   isVerified?: boolean;
+
+  handle?: string;
+  role?: 'admin' | 'member';
+  avatar?: string;
+  cover?: string;
+  bio?: string;
+  location?: string;
+  status?: string;
+  interests?: string[];
+  following?: any[];
+  groups?: any[];
+  isBlocked?: boolean;
+
+  // WordPress migration fields
+  legacyWpId?: number;
+  passwordResetRequired?: boolean;
+  source?: 'app' | 'wordpress';
 };
 
 @Injectable()
@@ -181,6 +197,19 @@ export class UsersService {
     };
   }
 
+
+async updatePasswordAfterReset(email: string, passwordHash: string) {
+  return this.userModel.updateOne(
+    { email: email.toLowerCase().trim() },
+    {
+      $set: {
+        passwordHash,
+        passwordResetRequired: false,
+        isVerified: true,
+      },
+    },
+  );
+}
 
 
 

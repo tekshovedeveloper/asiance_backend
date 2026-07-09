@@ -17,34 +17,90 @@ export class AuthService {
     @InjectModel(Otp.name) private readonly otpModel: Model<OtpDocument>,
   ) {}
 
+  // async register(dto: RegisterDto) {
+  //   const existing = await this.users.findByEmail(dto.email);
+  //   if (existing) {
+  //     if (existing.isVerified) {
+  //       throw new BadRequestException('An account with this email already exists.');
+  //     }
+  //     // Unverified account exists — resend OTP
+  //     await this.dispatchOtp(dto.email);
+  //     return { message: 'OTP resent. Please check your email to verify your account.' };
+  //   }
+
+  //   const passwordHash = await bcrypt.hash(dto.password, 12);
+  //   const name = `${dto.firstName} ${dto.lastName}`.trim();
+
+  //   await this.users.create({
+  //     name,
+  //     firstName: dto.firstName,
+  //     lastName: dto.lastName,
+  //     email: dto.email,
+  //     phone: dto.phone ?? '',
+  //     country: dto.country,
+  //     passwordHash,
+  //     isVerified: false,
+  //   });
+
+  //   await this.dispatchOtp(dto.email);
+  //   return { message: 'Registration successful. Check your email for the verification code.' };
+  // }
+
+
+
   async register(dto: RegisterDto) {
-    const existing = await this.users.findByEmail(dto.email);
-    if (existing) {
-      if (existing.isVerified) {
-        throw new BadRequestException('An account with this email already exists.');
-      }
-      // Unverified account exists — resend OTP
-      await this.dispatchOtp(dto.email);
-      return { message: 'OTP resent. Please check your email to verify your account.' };
+  const email = dto.email.toLowerCase().trim();
+
+  const existing = await this.users.findByEmail(email);
+
+  if (existing) {
+    // For old WordPress migrated users
+    if (existing.passwordResetRequired) {
+      throw new BadRequestException(
+        'This account was migrated from the old website. Please reset your password to continue.',
+      );
     }
 
-    const passwordHash = await bcrypt.hash(dto.password, 12);
-    const name = `${dto.firstName} ${dto.lastName}`.trim();
+    // Normal verified user already exists
+    if (existing.isVerified) {
+      throw new BadRequestException('An account with this email already exists.');
+    }
 
-    await this.users.create({
-      name,
-      firstName: dto.firstName,
-      lastName: dto.lastName,
-      email: dto.email,
-      phone: dto.phone ?? '',
-      country: dto.country,
-      passwordHash,
-      isVerified: false,
-    });
+    // Unverified normal user exists, resend OTP
+    await this.dispatchOtp(email);
 
-    await this.dispatchOtp(dto.email);
-    return { message: 'Registration successful. Check your email for the verification code.' };
+    return {
+      message: 'OTP resent. Please check your email to verify your account.',
+    };
   }
+
+  const passwordHash = await bcrypt.hash(dto.password, 12);
+  const name = `${dto.firstName} ${dto.lastName}`.trim();
+
+  await this.users.create({
+    name,
+    firstName: dto.firstName,
+    lastName: dto.lastName,
+    email,
+    phone: dto.phone ?? '',
+    country: dto.country,
+    passwordHash,
+    isVerified: false,
+
+    // New users from your custom website
+    passwordResetRequired: false,
+    source: 'app',
+  });
+
+  await this.dispatchOtp(email);
+
+  return {
+    message: 'Registration successful. Check your email for the verification code.',
+  };
+}
+
+
+
 
   async verifyOtp(dto: VerifyOtpDto) {
     const otp = await this.otpModel.findOne({
@@ -74,19 +130,41 @@ export class AuthService {
     return { message: 'New verification code sent to your email.' };
   }
 
+  // async login(dto: LoginDto) {
+  //   const user = await this.users.findByEmail(dto.email);
+  //   if (!user) throw new UnauthorizedException('Invalid email or password.');
+
+  //   const valid = await bcrypt.compare(dto.password, user.passwordHash);
+  //   if (!valid) throw new UnauthorizedException('Invalid email or password.');
+
+  //   if (!user.isVerified) {
+  //     throw new UnauthorizedException('Please verify your email before logging in.');
+  //   }
+
+  //   return this.issueToken(this.users.sanitize(user.toObject()));
+  // }
+
   async login(dto: LoginDto) {
-    const user = await this.users.findByEmail(dto.email);
-    if (!user) throw new UnauthorizedException('Invalid email or password.');
+  const user = await this.users.findByEmail(dto.email);
+  if (!user) throw new UnauthorizedException('Invalid email or password.');
 
-    const valid = await bcrypt.compare(dto.password, user.passwordHash);
-    if (!valid) throw new UnauthorizedException('Invalid email or password.');
-
-    if (!user.isVerified) {
-      throw new UnauthorizedException('Please verify your email before logging in.');
-    }
-
-    return this.issueToken(this.users.sanitize(user.toObject()));
+  if (user.passwordResetRequired) {
+    throw new UnauthorizedException(
+      'This account was migrated from the old website. Please reset your password before logging in.',
+    );
   }
+
+  const valid = await bcrypt.compare(dto.password, user.passwordHash);
+  if (!valid) throw new UnauthorizedException('Invalid email or password.');
+
+  if (!user.isVerified) {
+    throw new UnauthorizedException('Please verify your email before logging in.');
+  }
+
+  return this.issueToken(this.users.sanitize(user.toObject()));
+}
+
+
 
   async forgotPassword(dto: ForgotPasswordDto) {
     const user = await this.users.findByEmail(dto.email);
@@ -97,25 +175,60 @@ export class AuthService {
     return { message: 'If an account with that email exists, a reset code has been sent.' };
   }
 
+  // async resetPassword(dto: ResetPasswordDto) {
+  //   const otp = await this.otpModel.findOne({
+  //     email: dto.email.toLowerCase(),
+  //     code: dto.code,
+  //     purpose: 'reset',
+  //     used: false,
+  //     expiresAt: { $gt: new Date() },
+  //   });
+
+  //   if (!otp) {
+  //     throw new BadRequestException('Invalid or expired reset code.');
+  //   }
+
+  //   await this.otpModel.updateOne({ _id: otp._id }, { used: true });
+  //   const passwordHash = await bcrypt.hash(dto.newPassword, 12);
+  //   await this.users.updatePasswordHash(dto.email, passwordHash);
+
+  //   return { message: 'Password reset successfully. You can now log in.' };
+  // }
+
   async resetPassword(dto: ResetPasswordDto) {
-    const otp = await this.otpModel.findOne({
-      email: dto.email.toLowerCase(),
-      code: dto.code,
-      purpose: 'reset',
-      used: false,
-      expiresAt: { $gt: new Date() },
-    });
+  const email = dto.email.toLowerCase().trim();
 
-    if (!otp) {
-      throw new BadRequestException('Invalid or expired reset code.');
-    }
+  const otp = await this.otpModel.findOne({
+    email,
+    code: dto.code,
+    purpose: 'reset',
+    used: false,
+    expiresAt: { $gt: new Date() },
+  });
 
-    await this.otpModel.updateOne({ _id: otp._id }, { used: true });
-    const passwordHash = await bcrypt.hash(dto.newPassword, 12);
-    await this.users.updatePasswordHash(dto.email, passwordHash);
-
-    return { message: 'Password reset successfully. You can now log in.' };
+  if (!otp) {
+    throw new BadRequestException('Invalid or expired reset code.');
   }
+
+  const user = await this.users.findByEmail(email);
+
+  if (!user) {
+    throw new NotFoundException('No account found with this email.');
+  }
+
+  await this.otpModel.updateOne(
+    { _id: otp._id },
+    { used: true },
+  );
+
+  const passwordHash = await bcrypt.hash(dto.newPassword, 12);
+
+  await this.users.updatePasswordAfterReset(email, passwordHash);
+
+  return {
+    message: 'Password reset successfully. You can now log in.',
+  };
+}
 
   private async dispatchOtp(email: string) {
     await this.otpModel.deleteMany({ email: email.toLowerCase(), purpose: 'verify' });
