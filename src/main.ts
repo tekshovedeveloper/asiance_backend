@@ -12,12 +12,31 @@ async function bootstrap() {
 
   const config = app.get(ConfigService);
 
-  const origins = (config.get<string>('WEB_ORIGIN') ?? 'http://localhost:3000')
+  const defaultOrigins = [
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'https://asiance.co',
+    'https://www.asiance.co',
+    'http://asiance.co',
+    'http://www.asiance.co',
+  ];
+
+  const configuredOrigins = (config.get<string>('WEB_ORIGIN') ?? '')
     .split(',')
-    .map((origin) => origin.trim());
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  const origins = Array.from(new Set([...defaultOrigins, ...configuredOrigins]));
 
   app.enableCors({
-    origin: origins,
+    origin: (origin, callback) => {
+      if (!origin || origins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      callback(null, false);
+    },
     credentials: true,
   });
 
