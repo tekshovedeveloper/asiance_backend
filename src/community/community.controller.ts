@@ -10,6 +10,7 @@ import {
   Query,
   Req,
   UploadedFile,
+  UseFilters,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
@@ -18,53 +19,20 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { FileInterceptor } from '@nestjs/platform-express';
-import type { Request } from 'express';
-import { existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { diskStorage, FileFilterCallback } from 'multer';
+import { memoryStorage } from 'multer';
+import { CloudinaryService } from '../uploads/cloudinary.service';
+import { uploadFileFilter } from '../uploads/upload-file.filter';
+import { MAX_UPLOAD_FILE_SIZE_BYTES } from '../uploads/upload-limits';
+import { UploadSizeExceptionFilter } from '../uploads/upload-size.exception-filter';
 import { CommunityService } from './community.service';
 import { ActivityCommentDto, ActivityDto, ActivityUpdateDto, CreateThreadDto, FileAssetDto, ForumThreadDto, GroupDto, GroupTypeDto, MessageDto, ReactionDto } from './dto';
 
-const UPLOAD_DIR = join(__dirname, '..', '..', 'uploads');
-
-function mediaFileFilter(_req: Request, file: any, cb: FileFilterCallback) {
-  if (!file || !file.mimetype) {
-    return cb(new BadRequestException('Invalid file upload.'), false);
-  }
-
-  const allowed = file.mimetype.startsWith('image/') ||
-    file.mimetype.startsWith('video/') ||
-    file.mimetype.startsWith('audio/') ||
-    file.mimetype.startsWith('application/') ||
-    file.mimetype.startsWith('text/') ||
-    file.mimetype === 'image/gif';
-
-  if (!allowed) {
-    return cb(new BadRequestException('Only media or document files are allowed.'), false);
-  }
-
-  cb(null, true);
-}
-
-const storage = diskStorage({
-  destination: (_req, _file, cb) => {
-    if (!existsSync(UPLOAD_DIR)) {
-      mkdirSync(UPLOAD_DIR, { recursive: true });
-    }
-    cb(null, UPLOAD_DIR);
-  },
-  filename: (_req, file, cb) => {
-    const safeName = file.originalname
-      .replace(/\s+/g, '-')
-      .replace(/[^a-zA-Z0-9.-]/g, '')
-      .toLowerCase();
-    cb(null, `${Date.now()}-${safeName}`);
-  },
-});
-
 @Controller()
 export class CommunityController {
-  constructor(private readonly community: CommunityService) {}
+  constructor(
+    private readonly community: CommunityService,
+    private readonly cloudinary: CloudinaryService,
+  ) {}
 
   // ─── Group Types ────────────────────────────────────────────────────────────
 
@@ -382,12 +350,27 @@ export class CommunityController {
 
   @Post('library/upload')
   @UseGuards(AuthGuard('jwt'))
-  @UseInterceptors(FileInterceptor('file', { storage, fileFilter: mediaFileFilter }))
-  uploadLibraryFile(@UploadedFile() file: any, @Req() req: Request) {
+  @UseFilters(UploadSizeExceptionFilter)
+  @UseInterceptors(FileInterceptor('file', {
+    storage: memoryStorage(),
+    fileFilter: uploadFileFilter,
+    limits: { fileSize: MAX_UPLOAD_FILE_SIZE_BYTES },
+  }))
+  async uploadLibraryFile(@UploadedFile() file: any) {
     if (!file) throw new BadRequestException('No file uploaded.');
-    const protocol = req.protocol;
-    const host = req.get('host');
-    return { url: `${protocol}://${host}/api/uploads/${file.filename}` };
+
+    const uploaded = await this.cloudinary.uploadBuffer({
+      buffer: file.buffer,
+      originalName: file.originalname,
+      mimeType: file.mimetype,
+      folder: 'asiance/library',
+    });
+
+    return {
+      url: uploaded.secureUrl,
+      publicId: uploaded.publicId,
+      resourceType: uploaded.resourceType,
+    };
   }
 
   // ─── Messages ────────────────────────────────────────────────────────────────

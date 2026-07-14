@@ -7,7 +7,8 @@
     "start": "node dist/main.js",
     "start:dev": "nest start --watch",
     "seed": "ts-node -r tsconfig-paths/register src/seed.ts",
-    "migrate:wp-users": "node scripts/migrate-wp-users.js"
+    "migrate:wp-users": "node scripts/migrate-wp-users.js",
+    "migrate:uploads-to-cloudinary": "node scripts/migrate-uploads-to-cloudinary.js"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.23",

@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { MongooseModule } from '@nestjs/mongoose';
 import { User, UserSchema } from '../users/user.schema';
+import { UploadsModule } from '../uploads/uploads.module';
 import { Activity, ActivitySchema } from './activity.schema';
 import { ChatGateway } from './chat.gateway';
 import { CommunityController } from './community.controller';
@@ -19,6 +20,7 @@ import { PostMedia, PostMediaSchema } from './post-media.schema';
 
 @Module({
   imports: [
+    UploadsModule,
     JwtModule.registerAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
