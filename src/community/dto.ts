@@ -67,6 +67,10 @@ export class ActivityDto {
   privacy?: 'public' | 'friends' | 'group' | 'private';
 
   @IsOptional()
+  @IsBoolean()
+  featured?: boolean;
+
+  @IsOptional()
   @IsString()
   groupSlug?: string;
 
@@ -111,6 +115,10 @@ export class ActivityUpdateDto {
   @IsOptional()
   @IsString()
   type?: 'post' | 'comment' | 'join' | 'thread' | 'product';
+
+  @IsOptional()
+  @IsBoolean()
+  featured?: boolean;
 
   @IsOptional()
   @IsString()

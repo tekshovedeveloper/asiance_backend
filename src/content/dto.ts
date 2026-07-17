@@ -1,4 +1,21 @@
-import { IsArray, IsBoolean, IsDateString, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsBoolean, IsDateString, IsIn, IsNumber, IsOptional, IsString } from 'class-validator';
+
+export class ArticleCategoryDto {
+  @IsString()
+  name: string;
+
+  @IsOptional()
+  @IsString()
+  slug?: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsNumber()
+  sortOrder?: number;
+}
 
 export class ArticleDto {
   @IsString()
@@ -34,6 +51,10 @@ export class ArticleDto {
   @IsOptional()
   @IsBoolean()
   featured?: boolean;
+
+  @IsOptional()
+  @IsIn(['draft', 'pending', 'published'])
+  status?: 'draft' | 'pending' | 'published';
 
   @IsOptional()
   @IsDateString()

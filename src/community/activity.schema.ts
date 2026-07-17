@@ -20,6 +20,9 @@ export class Activity {
   @Prop({ enum: ['public', 'friends', 'group', 'private'], default: 'public' })
   privacy: 'public' | 'friends' | 'group' | 'private';
 
+  @Prop({ default: false })
+  featured: boolean;
+
   @Prop({ required: true })
   text: string;
 

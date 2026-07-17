@@ -33,6 +33,11 @@ export class UsersController {
     return this.users.follow(user.id, targetId);
   }
 
+  @Get(':handle/friends')
+  publicFriends(@Param('handle') handle: string) {
+    return this.users.listPublicFriendsByHandle(handle);
+  }
+
   @Get(':handle')
   find(@Param('handle') handle: string) {
     return this.users.findByHandle(handle);

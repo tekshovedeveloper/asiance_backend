@@ -2,6 +2,24 @@ import { Injectable } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 import { invoiceEmailTemplate } from './templates/invoice-email.template';
 
+type ContactInquiry = {
+  name: string;
+  email: string;
+  subject: string;
+  message: string;
+  phone?: string;
+  topic?: string;
+};
+
+function escapeHtml(value = '') {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 @Injectable()
 export class EmailService {
   private transporter = nodemailer.createTransport({
@@ -74,6 +92,60 @@ export class EmailService {
       return info;
     } catch (error) {
       console.error('EMAIL ERROR:', error);
+      throw error;
+    }
+  }
+
+  async sendContactInquiry(inquiry: ContactInquiry) {
+    const to = process.env.CONTACT_ADMIN_EMAIL || process.env.EMAIL_FROM || process.env.SMTP_USER;
+    const from = process.env.EMAIL_FROM || process.env.SMTP_USER;
+
+    if (!to || !from) {
+      throw new Error('Contact email is not configured.');
+    }
+
+    const safe = {
+      name: escapeHtml(inquiry.name),
+      email: escapeHtml(inquiry.email),
+      subject: escapeHtml(inquiry.subject),
+      topic: escapeHtml(inquiry.topic || 'General question'),
+      phone: escapeHtml(inquiry.phone || 'Not provided'),
+      message: escapeHtml(inquiry.message).replace(/\n/g, '<br />'),
+    };
+
+    try {
+      await this.transporter.sendMail({
+        from,
+        to,
+        replyTo: inquiry.email,
+        subject: `New Asiance contact: ${inquiry.subject}`,
+        text: [
+          `Name: ${inquiry.name}`,
+          `Email: ${inquiry.email}`,
+          `Phone: ${inquiry.phone || 'Not provided'}`,
+          `Topic: ${inquiry.topic || 'General question'}`,
+          `Subject: ${inquiry.subject}`,
+          '',
+          inquiry.message,
+        ].join('\n'),
+        html: `
+          <div style="font-family:Inter,Arial,sans-serif;max-width:640px;margin:auto;padding:32px;background:#faf7fb;color:#1a1320;">
+            <div style="background:#fff;border:1px solid #e6dfe8;border-radius:14px;padding:28px;">
+              <p style="margin:0 0 8px;color:#7a2c8a;font-size:12px;letter-spacing:.14em;text-transform:uppercase;">Asiance contact form</p>
+              <h2 style="margin:0 0 18px;font-size:24px;line-height:1.2;">${safe.subject}</h2>
+              <table style="width:100%;border-collapse:collapse;margin:0 0 22px;font-size:14px;">
+                <tr><td style="padding:8px 0;color:#7a6f80;">Name</td><td style="padding:8px 0;font-weight:600;">${safe.name}</td></tr>
+                <tr><td style="padding:8px 0;color:#7a6f80;">Email</td><td style="padding:8px 0;font-weight:600;">${safe.email}</td></tr>
+                <tr><td style="padding:8px 0;color:#7a6f80;">Phone</td><td style="padding:8px 0;font-weight:600;">${safe.phone}</td></tr>
+                <tr><td style="padding:8px 0;color:#7a6f80;">Topic</td><td style="padding:8px 0;font-weight:600;">${safe.topic}</td></tr>
+              </table>
+              <div style="padding:18px;border-radius:12px;background:#f1ebf2;line-height:1.65;font-size:15px;">${safe.message}</div>
+            </div>
+          </div>
+        `,
+      });
+    } catch (error) {
+      console.error('CONTACT EMAIL ERROR:', error);
       throw error;
     }
   }

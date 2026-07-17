@@ -1,8 +1,9 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { Friendship, FriendshipDocument } from '../community/friendship.schema';
 import { slugify } from '../common/slug';
-import { User, UserDocument } from './user.schema';
+import { DEFAULT_USER_AVATAR, DEFAULT_USER_COVER, User, UserDocument } from './user.schema';
 import { UpdateMeDto } from './dto/update-me.dto';
 
 export type CreateUserInput = {
@@ -35,12 +36,20 @@ export type CreateUserInput = {
 
 @Injectable()
 export class UsersService {
-  constructor(@InjectModel(User.name) private readonly userModel: Model<UserDocument>) {}
+  constructor(
+    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    @InjectModel(Friendship.name) private readonly friendshipModel: Model<FriendshipDocument>,
+  ) {}
 
   async create(input: CreateUserInput) {
     const handle = await this.uniqueHandle(slugify(input.name));
     try {
-      const user = await this.userModel.create({ ...input, handle });
+      const user = await this.userModel.create({
+        ...input,
+        handle,
+        avatar: this.imageOrDefault(input.avatar, DEFAULT_USER_AVATAR),
+        cover: this.imageOrDefault(input.cover, DEFAULT_USER_COVER),
+      });
       return this.sanitize(user.toObject());
     } catch (error) {
       if (error?.code === 11000) {
@@ -67,7 +76,8 @@ export class UsersService {
     if (!user) {
       throw new NotFoundException('Member not found.');
     }
-    return this.sanitize(user);
+    const friendCount = await this.countAcceptedFriends(user._id);
+    return { ...this.sanitize(user), friendCount };
   }
 
   async list(search?: string) {
@@ -111,6 +121,8 @@ export class UsersService {
     const { passwordHash, __v, ...safe } = user;
     return {
       ...safe,
+      avatar: this.imageOrDefault(user.avatar, DEFAULT_USER_AVATAR),
+      cover: this.imageOrDefault(user.cover, DEFAULT_USER_COVER),
       id: user._id?.toString?.() ?? user.id,
       following: user.following?.map((id) => id.toString?.() ?? id) ?? [],
       groups: user.groups?.map((id) => id.toString?.() ?? id) ?? [],
@@ -148,6 +160,19 @@ export class UsersService {
     if (typeof dto.name === 'string') update.name = dto.name.trim();
     if (typeof dto.bio === 'string') update.bio = dto.bio;
     if (typeof dto.email === 'string') update.email = dto.email.toLowerCase().trim();
+    if (typeof dto.facebookUrl === 'string') update.facebookUrl = dto.facebookUrl.trim();
+    if (typeof dto.instagramUrl === 'string') update.instagramUrl = dto.instagramUrl.trim();
+    if (typeof dto.tiktokUrl === 'string') update.tiktokUrl = dto.tiktokUrl.trim();
+    if (typeof dto.snapchatUrl === 'string') update.snapchatUrl = dto.snapchatUrl.trim();
+    if (typeof dto.emailLink === 'string') update.emailLink = dto.emailLink.trim();
+    if (typeof dto.showFriends === 'boolean') update.showFriends = dto.showFriends;
+    if (typeof dto.showProducts === 'boolean') update.showProducts = dto.showProducts;
+    if (Array.isArray(dto.interests)) {
+      update.interests = dto.interests
+        .map((interest) => interest.trim())
+        .filter(Boolean)
+        .slice(0, 6);
+    }
 
     if (typeof dto.avatarUrl === 'string') update.avatar = dto.avatarUrl.trim();
     if (typeof dto.coverImageUrl === 'string') update.cover = dto.coverImageUrl.trim();
@@ -192,9 +217,62 @@ export class UsersService {
       email: user.email,
       lastActiveText: user.status || 'active now',
       bio: user.bio || '',
-      avatarUrl: user.avatar || '',
-      coverImageUrl: user.cover || '',
+      avatarUrl: this.imageOrDefault(user.avatar, DEFAULT_USER_AVATAR),
+      coverImageUrl: this.imageOrDefault(user.cover, DEFAULT_USER_COVER),
+      interests: user.interests || [],
+      facebookUrl: user.facebookUrl || '',
+      instagramUrl: user.instagramUrl || '',
+      tiktokUrl: user.tiktokUrl || '',
+      snapchatUrl: user.snapchatUrl || '',
+      emailLink: user.emailLink || '',
+      showFriends: Boolean(user.showFriends),
+      showProducts: Boolean(user.showProducts),
     };
+  }
+
+  private countAcceptedFriends(userId: any) {
+    const uid = new Types.ObjectId(userId);
+    return this.friendshipModel.countDocuments({
+      status: 'accepted',
+      $or: [{ requesterId: uid }, { addresseeId: uid }],
+    });
+  }
+
+  async listPublicFriendsByHandle(handle: string) {
+    const member = await this.userModel.findOne({ handle: handle.toLowerCase() }).lean();
+    if (!member) {
+      throw new NotFoundException('Member not found.');
+    }
+
+    if (!member.showFriends) return [];
+
+    const memberId = member._id;
+    const friendships = await this.friendshipModel.find({
+      status: 'accepted',
+      $or: [{ requesterId: memberId }, { addresseeId: memberId }],
+    }).lean();
+
+    if (!friendships.length) return [];
+
+    const friendIds = friendships.map((friendship) =>
+      friendship.requesterId.toString() === memberId.toString()
+        ? friendship.addresseeId
+        : friendship.requesterId,
+    );
+
+    const users = await this.userModel.find({ _id: { $in: friendIds } }).lean();
+    return users.map((user: any) => ({
+      _id: user._id,
+      name: user.name,
+      handle: user.handle,
+      avatar: this.imageOrDefault(user.avatar, DEFAULT_USER_AVATAR),
+      status: user.status,
+      bio: user.bio,
+    }));
+  }
+
+  private imageOrDefault(value: unknown, fallback: string) {
+    return typeof value === 'string' && value.trim() ? value.trim() : fallback;
   }
 
 
@@ -214,5 +292,3 @@ async updatePasswordAfterReset(email: string, passwordHash: string) {
 
 
 }
-
-

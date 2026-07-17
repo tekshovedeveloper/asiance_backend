@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Model, SortOrder, Types } from 'mongoose';
 import { slugify } from '../common/slug';
 import { CheckoutDto, ProductAttributeDto, ProductDto, ProductTaxonomyDto } from './dto';
 import { Order, OrderDocument, OrderStatus } from './order.schema';
@@ -51,7 +51,17 @@ export class ShopService {
   // }
 
 
-  async listProducts(options: { category?: string; q?: string; admin?: boolean; status?: string } = {}) {
+  productSort(sort?: string): Record<string, SortOrder> {
+    if (sort === 'latest') return { createdAt: -1 };
+    if (sort === 'price-asc') return { price: 1, createdAt: -1 };
+    if (sort === 'price-desc') return { price: -1, createdAt: -1 };
+    if (sort === 'popularity') return { menuOrder: 1, createdAt: -1 };
+    if (sort === 'rating') return { enableReviews: -1, createdAt: -1 };
+
+    return { menuOrder: 1, createdAt: -1 };
+  }
+
+  async listProducts(options: { category?: string; q?: string; admin?: boolean; status?: string; sort?: string } = {}) {
     const query: any = {};
   
     if (options.admin) {
@@ -83,7 +93,7 @@ export class ShopService {
       ];
     }
   
-    return this.productModel.find(query).sort({ createdAt: -1 }).limit(120).lean();
+    return this.productModel.find(query).sort(this.productSort(options.sort)).limit(120).lean();
   }
 
 
@@ -547,6 +557,68 @@ export class ShopService {
       .lean();
   }
 
+  async listPublicPurchasedProductsByHandle(handle: string) {
+    const member = await this.usersService.findByHandle(handle);
+    if (!member?.showProducts || !member.id || !Types.ObjectId.isValid(member.id)) {
+      return [];
+    }
+
+    const orders = await this.orderModel
+      .find({
+        userId: new Types.ObjectId(member.id),
+        status: { $nin: ['cancelled', 'refunded', 'failed', 'trash'] },
+      })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const products = new Map<string, {
+      key: string;
+      name: string;
+      slug?: string;
+      image?: string;
+      quantity: number;
+      variationName?: string;
+      lastPurchasedAt?: Date;
+    }>();
+
+    orders.forEach((order: any) => {
+      (order.items ?? []).forEach((item: any) => {
+        const name = item.name?.trim();
+        if (!name) return;
+
+        const key = item.slug || item.productId || name.toLowerCase();
+        const quantity = Number(item.quantity) || 1;
+        const existing = products.get(key);
+
+        if (existing) {
+          existing.quantity += quantity;
+          existing.image = existing.image || item.image;
+          existing.slug = existing.slug || item.slug;
+          existing.variationName = existing.variationName || item.selectedVariationName;
+          if (
+            order.createdAt &&
+            (!existing.lastPurchasedAt || new Date(order.createdAt) > new Date(existing.lastPurchasedAt))
+          ) {
+            existing.lastPurchasedAt = order.createdAt;
+          }
+          return;
+        }
+
+        products.set(key, {
+          key,
+          name,
+          slug: item.slug,
+          image: item.image,
+          quantity,
+          variationName: item.selectedVariationName,
+          lastPurchasedAt: order.createdAt,
+        });
+      });
+    });
+
+    return Array.from(products.values());
+  }
+
   async cancelMyOrder(orderId: string, userId: string) {
     const order = await this.orderModel.findById(orderId).lean();
 
@@ -601,4 +673,3 @@ export class ShopService {
 
   //   return order;
   // }
-

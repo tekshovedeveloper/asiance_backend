@@ -16,12 +16,14 @@ export class ShopController {
     @Query('q') q?: string,
     @Query('admin') admin?: string,
     @Query('status') status?: string,
+    @Query('sort') sort?: string,
   ) {
     return this.shop.listProducts({
       category,
       q,
       admin: admin === 'true',
       status,
+      sort,
     });
   }
 
@@ -132,6 +134,11 @@ export class ShopController {
   @Get('products/:slug')
   product(@Param('slug') slug: string) {
     return this.shop.findProduct(slug);
+  }
+
+  @Get('members/:handle/purchased-products')
+  publicPurchasedProducts(@Param('handle') handle: string) {
+    return this.shop.listPublicPurchasedProductsByHandle(handle);
   }
 
   @Post('products')

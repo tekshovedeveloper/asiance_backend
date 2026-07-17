@@ -179,6 +179,11 @@ export class CommunityController {
     return this.community.listActivityByHandle(handle);
   }
 
+  @Get('activity/:activityId')
+  activityItem(@Param('activityId') activityId: string) {
+    return this.community.findActivityById(activityId);
+  }
+
   @Post('activity')
   @UseGuards(AuthGuard('jwt'))
   createActivity(@Body() dto: ActivityDto, @CurrentUser() user: any) {

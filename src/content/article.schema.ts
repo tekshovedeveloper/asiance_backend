@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument } from 'mongoose';
+import { HydratedDocument, Types } from 'mongoose';
 
 export type ArticleDocument = HydratedDocument<Article>;
 
@@ -26,6 +26,12 @@ export class Article {
   @Prop({ default: 'Asiance Editors' })
   authorName: string;
 
+  @Prop({ type: Types.ObjectId, ref: 'User', default: null })
+  authorId?: Types.ObjectId;
+
+  @Prop({ default: '' })
+  authorHandle?: string;
+
   @Prop({ type: [String], default: [] })
   tags: string[];
 
@@ -34,6 +40,15 @@ export class Article {
 
   @Prop({ default: false })
   featured: boolean;
+
+  @Prop({ default: 'published', enum: ['draft', 'pending', 'published'] })
+  status: 'draft' | 'pending' | 'published';
+
+  @Prop({ default: null })
+  submittedAt?: Date;
+
+  @Prop({ default: null })
+  approvedAt?: Date;
 
   @Prop({ default: Date.now })
   publishedAt: Date;

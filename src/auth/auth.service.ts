@@ -5,6 +5,7 @@ import * as bcrypt from 'bcryptjs';
 import { Model } from 'mongoose';
 import { EmailService } from '../email/email.service';
 import { UsersService } from '../users/users.service';
+import { DEFAULT_USER_AVATAR, DEFAULT_USER_COVER } from '../users/user.schema';
 import { ForgotPasswordDto, LoginDto, RegisterDto, ResendOtpDto, ResetPasswordDto, VerifyOtpDto } from './dto';
 import { Otp, OtpDocument } from './otp.schema';
 
@@ -84,6 +85,8 @@ export class AuthService {
     email,
     phone: dto.phone ?? '',
     country: dto.country,
+    avatar: DEFAULT_USER_AVATAR,
+    cover: DEFAULT_USER_COVER,
     passwordHash,
     isVerified: false,
 

@@ -284,6 +284,23 @@ export class CommunityService {
     }));
   }
 
+  async findActivityById(activityId: string) {
+    if (!Types.ObjectId.isValid(activityId)) {
+      throw new NotFoundException('Activity not found.');
+    }
+
+    const item = await this.activityModel.findById(activityId).lean();
+    if (!item) {
+      throw new NotFoundException('Activity not found.');
+    }
+
+    return {
+      ...item,
+      likes: Math.max(item.likes ?? 0, 0),
+      comments: Math.max(item.comments ?? 0, 0),
+    };
+  }
+
   async listMyActivity(userId: string) {
     const items = await this.activityModel
       .find({ actorId: userId })
@@ -329,6 +346,7 @@ export class CommunityService {
       actorHandle: user.handle,
       type: dto.type ?? 'post',
       groupSlug: dto.groupSlug ?? '',
+      featured: Boolean(dto.featured),
       likes: 0,
       comments: 0,
       likedBy: [],
@@ -368,6 +386,7 @@ export class CommunityService {
             ...(dto.targetName !== undefined ? { targetName: dto.targetName } : {}),
             ...(dto.targetSlug !== undefined ? { targetSlug: dto.targetSlug } : {}),
             ...(dto.media !== undefined ? { media: dto.media } : {}),
+            ...(dto.featured !== undefined ? { featured: Boolean(dto.featured) } : {}),
           },
         },
         { new: true },
