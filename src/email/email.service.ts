@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 import { invoiceEmailTemplate } from './templates/invoice-email.template';
 
@@ -20,24 +20,89 @@ function escapeHtml(value = '') {
     .replace(/'/g, '&#039;');
 }
 
+function readEnv(name: string) {
+  const value = process.env[name];
+  return typeof value === 'string' ? value.trim() : undefined;
+}
+
+function parsePort(value?: string) {
+  const port = Number(value);
+  return Number.isFinite(port) && port > 0 ? port : 587;
+}
+
+function normalizePassword(host?: string, password?: string) {
+  if (!password) return undefined;
+  const trimmed = password.trim();
+
+  // Google shows app passwords grouped with spaces; SMTP auth needs the compact value.
+  if (host?.toLowerCase().includes('gmail.com')) {
+    return trimmed.replace(/\s+/g, '');
+  }
+
+  return trimmed;
+}
+
 @Injectable()
 export class EmailService {
-  private transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT),
-    secure: process.env.SMTP_SECURE === 'true',
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
-    logger: true,
-    debug: true,
-  });
+  private readonly from: string;
+  private readonly transporter: nodemailer.Transporter;
+
+  constructor() {
+    const host = readEnv('SMTP_HOST');
+    const port = parsePort(readEnv('SMTP_PORT'));
+    const secureSetting = readEnv('SMTP_SECURE')?.toLowerCase();
+    const secure = secureSetting ? secureSetting === 'true' : port === 465;
+    const user = readEnv('SMTP_USER');
+    const pass = normalizePassword(host, process.env.SMTP_PASS);
+
+    this.from = readEnv('EMAIL_FROM') || user || '';
+    this.transporter = nodemailer.createTransport({
+      host,
+      port,
+      secure,
+      auth: user && pass ? { user, pass } : undefined,
+      logger: readEnv('SMTP_LOGGER') === 'true',
+      debug: readEnv('SMTP_DEBUG') === 'true',
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 20000,
+    });
+  }
+
+  private getSender() {
+    if (!this.from) {
+      throw new ServiceUnavailableException('Email sender is not configured.');
+    }
+
+    return this.from;
+  }
+
+  private throwEmailError(label: string, error: unknown): never {
+    const smtpError = error as {
+      code?: string;
+      command?: string;
+      response?: string;
+      responseCode?: number;
+      message?: string;
+    };
+
+    console.error(`${label} EMAIL ERROR:`, {
+      code: smtpError?.code,
+      command: smtpError?.command,
+      responseCode: smtpError?.responseCode,
+      response: smtpError?.response,
+      message: smtpError?.message,
+    });
+
+    throw new ServiceUnavailableException(
+      `We could not send the ${label.toLowerCase()} email right now. Please try again shortly.`,
+    );
+  }
 
   async sendOtpEmail(email: string, code: string) {
     try {
       await this.transporter.sendMail({
-        from: process.env.EMAIL_FROM,
+        from: this.getSender(),
         to: email,
         subject: 'Your verification code',
         html: `
@@ -50,15 +115,14 @@ export class EmailService {
         `,
       });
     } catch (error) {
-      console.error('OTP EMAIL ERROR:', error);
-      throw error;
+      this.throwEmailError('OTP', error);
     }
   }
 
   async sendPasswordResetEmail(email: string, code: string) {
     try {
       await this.transporter.sendMail({
-        from: process.env.EMAIL_FROM,
+        from: this.getSender(),
         to: email,
         subject: 'Reset your password',
         html: `
@@ -71,8 +135,7 @@ export class EmailService {
         `,
       });
     } catch (error) {
-      console.error('PASSWORD RESET EMAIL ERROR:', error);
-      throw error;
+      this.throwEmailError('PASSWORD RESET', error);
     }
   }
 
@@ -81,7 +144,7 @@ export class EmailService {
       await this.transporter.verify();
 
       const info = await this.transporter.sendMail({
-        from: process.env.EMAIL_FROM,
+        from: this.getSender(),
         to: order.email,
         subject: `Invoice for Order #${order.orderNumber}`,
         html: invoiceEmailTemplate(order),
@@ -91,17 +154,16 @@ export class EmailService {
 
       return info;
     } catch (error) {
-      console.error('EMAIL ERROR:', error);
-      throw error;
+      this.throwEmailError('INVOICE', error);
     }
   }
 
   async sendContactInquiry(inquiry: ContactInquiry) {
-    const to = process.env.CONTACT_ADMIN_EMAIL || process.env.EMAIL_FROM || process.env.SMTP_USER;
-    const from = process.env.EMAIL_FROM || process.env.SMTP_USER;
+    const to = readEnv('CONTACT_ADMIN_EMAIL') || this.from || readEnv('SMTP_USER');
+    const from = this.getSender();
 
     if (!to || !from) {
-      throw new Error('Contact email is not configured.');
+      throw new ServiceUnavailableException('Contact email is not configured.');
     }
 
     const safe = {
@@ -145,8 +207,7 @@ export class EmailService {
         `,
       });
     } catch (error) {
-      console.error('CONTACT EMAIL ERROR:', error);
-      throw error;
+      this.throwEmailError('CONTACT', error);
     }
   }
 }
