@@ -16,7 +16,25 @@ import {
   ProductTagDocument,
 } from './product-taxonomy.schema';
 import { EmailService } from '../email/email.service';
+import type { OrderCustomerEmailType } from '../email/email.service';
 import { UsersService } from '../users/users.service';
+
+const orderCustomerEmailLabels: Record<OrderCustomerEmailType, string> = {
+  received: 'Order received details',
+  packed: 'Order packed',
+  pending: 'Payment pending',
+  processing: 'Order processing',
+  shipped: 'Order shipped',
+  completed: 'Order completed',
+  cancelled: 'Order cancelled',
+  refunded: 'Order refunded',
+  failed: 'Order failed',
+};
+
+function orderStatusEmailType(status: OrderStatus): OrderCustomerEmailType | null {
+  if (status === 'trash') return null;
+  return status;
+}
 
 @Injectable()
 export class ShopService {
@@ -443,19 +461,63 @@ export class ShopService {
   }
 
   async updateOrderStatus(id: string, status: OrderStatus) {
+    return this.updateOrder(id, { status });
+  }
+
+  async updateOrder(id: string, payload: { status?: OrderStatus; note?: { message?: string; type?: 'private' | 'customer' } }) {
+    const current = await this.orderModel.findById(id).lean();
+
+    if (!current) {
+      throw new NotFoundException('Order not found.');
+    }
+
+    const update: any = {};
+    const notes: Array<{ message: string; type: 'private' | 'customer'; createdAt: Date }> = [];
+
+    if (payload.status && payload.status !== current.status) {
+      const emailType = orderStatusEmailType(payload.status);
+
+      if (emailType) {
+        await this.emailService.sendOrderCustomerEmail({ ...current, status: payload.status }, emailType);
+      }
+
+      update.status = payload.status;
+      notes.push({
+        message: `Order status changed to ${payload.status}.`,
+        type: 'private',
+        createdAt: new Date(),
+      });
+
+      if (emailType) {
+        notes.push({
+          message: `${orderCustomerEmailLabels[emailType]} email sent to customer.`,
+          type: 'private',
+          createdAt: new Date(),
+        });
+      }
+    }
+
+    const noteMessage = payload.note?.message?.trim();
+    if (noteMessage) {
+      notes.push({
+        message: noteMessage,
+        type: payload.note?.type === 'customer' ? 'customer' : 'private',
+        createdAt: new Date(),
+      });
+    }
+
+    if (notes.length > 0) {
+      update.$push = { notes: { $each: notes } };
+    }
+
+    if (Object.keys(update).length === 0) {
+      return current;
+    }
+
     const order = await this.orderModel
       .findByIdAndUpdate(
         id,
-        {
-          status,
-          $push: {
-            notes: {
-              message: `Order status changed to ${status}.`,
-              type: 'private',
-              createdAt: new Date(),
-            },
-          },
-        },
+        update,
         { new: true },
       )
       .lean();
@@ -540,6 +602,42 @@ export class ShopService {
     return {
       success: true,
       message: 'Invoice email sent',
+    };
+  }
+
+  async sendOrderCustomerEmail(id: string, type: OrderCustomerEmailType) {
+    if (!orderCustomerEmailLabels[type]) {
+      throw new BadRequestException('Unsupported order email action.');
+    }
+
+    const order = await this.orderModel.findById(id);
+
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+
+    await this.emailService.sendOrderCustomerEmail(order, type);
+
+    const updated = await this.orderModel
+      .findByIdAndUpdate(
+        id,
+        {
+          $push: {
+            notes: {
+              message: `${orderCustomerEmailLabels[type]} email sent to customer.`,
+              type: 'private',
+              createdAt: new Date(),
+            },
+          },
+        },
+        { new: true },
+      )
+      .lean();
+
+    return {
+      success: true,
+      message: `${orderCustomerEmailLabels[type]} email sent`,
+      order: updated,
     };
   }
 

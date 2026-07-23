@@ -19,7 +19,7 @@ export class ShippingMethod {
   @Prop({ default: 0 })
   cost: number;
 
-  @Prop({ default: 'no_requirement' })
+  @Prop({ default: 'minimum_order' })
   freeShippingRequirement: string;
 
   @Prop({ default: 0 })

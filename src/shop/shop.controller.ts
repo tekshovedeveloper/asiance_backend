@@ -237,8 +237,8 @@ export class ShopController {
   @Patch('orders/:id')
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles('admin')
-  updateOrder(@Param('id') id: string, @Body('status') status: any) {
-    return this.shop.updateOrderStatus(id, status);
+  updateOrder(@Param('id') id: string, @Body() body: any) {
+    return this.shop.updateOrder(id, body);
   }
 
   @Delete('orders/:id')
@@ -269,5 +269,12 @@ export class ShopController {
   @Roles('admin')
   sendInvoice(@Param('id') id: string) {
     return this.shop.sendInvoiceEmail(id);
+  }
+
+  @Post('orders/:id/send-customer-email')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles('admin')
+  sendCustomerOrderEmail(@Param('id') id: string, @Body('type') type: any) {
+    return this.shop.sendOrderCustomerEmail(id, type);
   }
 }
