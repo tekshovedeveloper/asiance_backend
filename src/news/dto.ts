@@ -21,6 +21,10 @@ export class NewsCategoryDto {
   description?: string;
 
   @IsOptional()
+  @IsString()
+  image?: string;
+
+  @IsOptional()
   @IsNumber()
   sortOrder?: number;
 }

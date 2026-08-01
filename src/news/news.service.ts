@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { slugify } from '../common/slug';
-import { DEFAULT_NEWS_CATEGORIES } from './defaults';
+import { DEFAULT_NEWS_CATEGORIES, LEGACY_NEWS_CATEGORY_MIGRATIONS } from './defaults';
 import { NewsCategoryDto, NewsItemDto } from './dto';
 import { NewsCategory, NewsCategoryDocument } from './news-category.schema';
 import { NewsItem, NewsItemDocument } from './news-item.schema';
@@ -23,6 +23,10 @@ function limitValue(value?: string | number) {
   return Math.min(Math.max(parsed, 1), 100);
 }
 
+const LEGACY_NEWS_CATEGORY_SLUGS = LEGACY_NEWS_CATEGORY_MIGRATIONS.map(
+  (migration) => migration.from,
+);
+
 @Injectable()
 export class NewsService {
   constructor(
@@ -40,11 +44,31 @@ export class NewsService {
         ),
       ),
     );
+
+    const hasLegacyCategories = await this.categoryModel.exists({
+      slug: { $in: LEGACY_NEWS_CATEGORY_SLUGS },
+    });
+    if (!hasLegacyCategories) return;
+
+    await Promise.all(
+      LEGACY_NEWS_CATEGORY_MIGRATIONS.map((migration) => {
+        const target = DEFAULT_NEWS_CATEGORIES.find((category) => category.slug === migration.to);
+        if (!target) return Promise.resolve();
+        return this.newsModel.updateMany(
+          { categorySlug: migration.from },
+          { $set: { categorySlug: target.slug, categoryName: target.name } },
+        );
+      }),
+    );
+    await this.categoryModel.deleteMany({ slug: { $in: LEGACY_NEWS_CATEGORY_SLUGS } });
   }
 
   async listCategories() {
     await this.ensureDefaultCategories();
-    return this.categoryModel.find().sort({ sortOrder: 1, name: 1 }).lean();
+    return this.categoryModel
+      .find({ slug: { $nin: LEGACY_NEWS_CATEGORY_SLUGS } })
+      .sort({ sortOrder: 1, name: 1 })
+      .lean();
   }
 
   async createCategory(dto: NewsCategoryDto) {

@@ -14,6 +14,9 @@ export class NewsCategory {
   @Prop({ default: '' })
   description: string;
 
+  @Prop({ default: '' })
+  image: string;
+
   @Prop({ default: 0 })
   sortOrder: number;
 }
