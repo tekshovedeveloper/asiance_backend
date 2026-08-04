@@ -121,13 +121,19 @@ export class ContentService {
   async create(dto: ArticleDto) {
     const slug = await this.uniqueSlug(dto.slug || dto.title);
 
-    return this.articleModel.create({
+    const article = await this.articleModel.create({
       ...dto,
       slug,
       publishedAt: dto.publishedAt ? new Date(dto.publishedAt) : new Date(),
       status: dto.status ?? 'published',
       approvedAt: (dto.status ?? 'published') === 'published' ? new Date() : null,
     });
+
+    if (article.featured && article.status === 'published') {
+      await this.clearOtherFeaturedArticles(article.category, article._id);
+    }
+
+    return article;
   }
 
   async submit(dto: ArticleDto, user: { id: string; name: string; handle?: string }) {
@@ -176,6 +182,11 @@ export class ContentService {
     if (!article) {
       throw new NotFoundException('Article not found.');
     }
+
+    if (article.featured && article.status === 'published') {
+      await this.clearOtherFeaturedArticles(article.category, article._id);
+    }
+
     return article;
   }
 
@@ -194,6 +205,10 @@ export class ContentService {
 
     if (!article) {
       throw new NotFoundException('Article not found.');
+    }
+
+    if (article.featured) {
+      await this.clearOtherFeaturedArticles(article.category, article._id);
     }
 
     return article;
@@ -224,6 +239,18 @@ export class ContentService {
     }
 
     return slug;
+  }
+
+  private async clearOtherFeaturedArticles(category: string, selectedId: Types.ObjectId) {
+    await this.articleModel.updateMany(
+      {
+        _id: { $ne: selectedId },
+        category,
+        featured: true,
+        $or: [{ status: 'published' }, { status: { $exists: false } }],
+      },
+      { $set: { featured: false } },
+    );
   }
 
   private async ensureDefaultCategories() {
