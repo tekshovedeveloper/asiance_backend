@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Patch, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { OptionalJwtGuard } from '../common/guards/optional-jwt.guard';
 import { UsersService } from './users.service';
 import { UpdateMeDto } from './dto/update-me.dto';
 
@@ -39,7 +40,8 @@ export class UsersController {
   }
 
   @Get(':handle')
-  find(@Param('handle') handle: string) {
-    return this.users.findByHandle(handle);
+  @UseGuards(OptionalJwtGuard)
+  find(@Param('handle') handle: string, @CurrentUser() viewer: any) {
+    return this.users.findByHandleForViewer(handle, viewer?.id);
   }
 }

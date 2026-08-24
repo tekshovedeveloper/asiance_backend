@@ -122,6 +122,36 @@ export class User {
   @Prop({ default: '' })
   bio: string;
 
+  @Prop({ enum: ['public', 'members', 'private'], default: 'public' })
+  profileVisibility: 'public' | 'members' | 'private';
+
+  @Prop({ type: [String], default: [] })
+  profileTags: string[];
+
+  @Prop({ type: [String], default: [] })
+  hobbies: string[];
+
+  @Prop({ default: '' })
+  maritalStatus: string;
+
+  @Prop({ default: '' })
+  personalQuestion: string;
+
+  @Prop({ type: [String], default: [] })
+  blogCategoryInterests: string[];
+
+  @Prop({ default: '' })
+  blogCategoryReason: string;
+
+  @Prop({ type: [String], default: [] })
+  productCategoryInterests: string[];
+
+  @Prop({ default: '' })
+  productCategoryReason: string;
+
+  @Prop({ type: [String], default: [] })
+  communityCircleSlugs: string[];
+
   @Prop({ default: '' })
   facebookUrl: string;
 

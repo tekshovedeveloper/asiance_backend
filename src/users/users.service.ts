@@ -2,6 +2,7 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Friendship, FriendshipDocument } from '../community/friendship.schema';
+import { Group, GroupDocument } from '../community/group.schema';
 import { slugify } from '../common/slug';
 import { DEFAULT_USER_AVATAR, DEFAULT_USER_COVER, User, UserDocument } from './user.schema';
 import { UpdateMeDto } from './dto/update-me.dto';
@@ -39,6 +40,7 @@ export class UsersService {
   constructor(
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     @InjectModel(Friendship.name) private readonly friendshipModel: Model<FriendshipDocument>,
+    @InjectModel(Group.name) private readonly groupModel: Model<GroupDocument>,
   ) {}
 
   async create(input: CreateUserInput) {
@@ -78,6 +80,51 @@ export class UsersService {
     }
     const friendCount = await this.countAcceptedFriends(user._id);
     return { ...this.sanitize(user), friendCount };
+  }
+
+  async findByHandleForViewer(handle: string, viewerId?: string) {
+    const user = await this.userModel.findOne({ handle: handle.toLowerCase() }).lean();
+    if (!user) {
+      throw new NotFoundException('Member not found.');
+    }
+
+    const memberId = user._id.toString();
+    const visibility = user.profileVisibility || 'public';
+    const isOwner = Boolean(viewerId && viewerId === memberId);
+    const canViewProfile =
+      isOwner ||
+      visibility === 'public' ||
+      (visibility === 'members' && Boolean(viewerId));
+
+    if (!canViewProfile) {
+      return {
+        id: memberId,
+        _id: user._id,
+        name: user.name,
+        handle: user.handle,
+        avatar: this.imageOrDefault(user.avatar, DEFAULT_USER_AVATAR),
+        cover: this.imageOrDefault(user.cover, DEFAULT_USER_COVER),
+        bio: '',
+        location: '',
+        status: '',
+        profileVisibility: visibility,
+        canViewProfile: false,
+        interests: [],
+        profileTags: [],
+        following: [],
+        groups: [],
+        friendCount: 0,
+        showFriends: false,
+        showProducts: false,
+      };
+    }
+
+    const friendCount = await this.countAcceptedFriends(user._id);
+    return {
+      ...this.sanitize(user),
+      friendCount,
+      canViewProfile: true,
+    };
   }
 
   async list(search?: string) {
@@ -159,6 +206,48 @@ export class UsersService {
 
     if (typeof dto.name === 'string') update.name = dto.name.trim();
     if (typeof dto.bio === 'string') update.bio = dto.bio;
+    if (typeof dto.address === 'string') update.location = dto.address.trim();
+    if (typeof dto.profileVisibility === 'string') {
+      update.profileVisibility = dto.profileVisibility;
+    }
+    if (Array.isArray(dto.profileTags)) {
+      update.profileTags = dto.profileTags
+        .map((tag) => tag.trim())
+        .filter(Boolean)
+        .slice(0, 8);
+    }
+    if (Array.isArray(dto.hobbies)) {
+      update.hobbies = dto.hobbies
+        .map((hobby) => hobby.trim())
+        .filter(Boolean)
+        .slice(0, 8);
+    }
+    if (typeof dto.maritalStatus === 'string') update.maritalStatus = dto.maritalStatus.trim();
+    if (typeof dto.personalQuestion === 'string') update.personalQuestion = dto.personalQuestion.trim();
+    if (Array.isArray(dto.blogCategoryInterests)) {
+      update.blogCategoryInterests = dto.blogCategoryInterests
+        .map((category) => category.trim())
+        .filter(Boolean)
+        .slice(0, 3);
+    }
+    if (typeof dto.blogCategoryReason === 'string') {
+      update.blogCategoryReason = dto.blogCategoryReason.trim();
+    }
+    if (Array.isArray(dto.productCategoryInterests)) {
+      update.productCategoryInterests = dto.productCategoryInterests
+        .map((category) => category.trim())
+        .filter(Boolean)
+        .slice(0, 3);
+    }
+    if (typeof dto.productCategoryReason === 'string') {
+      update.productCategoryReason = dto.productCategoryReason.trim();
+    }
+    if (Array.isArray(dto.communityCircleSlugs)) {
+      update.communityCircleSlugs = dto.communityCircleSlugs
+        .map((slug) => slug.trim())
+        .filter(Boolean)
+        .slice(0, 12);
+    }
     if (typeof dto.email === 'string') update.email = dto.email.toLowerCase().trim();
     if (typeof dto.facebookUrl === 'string') update.facebookUrl = dto.facebookUrl.trim();
     if (typeof dto.instagramUrl === 'string') update.instagramUrl = dto.instagramUrl.trim();
@@ -187,12 +276,50 @@ export class UsersService {
       }
     }
 
-    const user = await this.userModel
+    let user = await this.userModel
       .findByIdAndUpdate(id, { $set: update }, { new: true })
       .lean();
 
     if (!user) throw new NotFoundException('Member not found.');
+
+    if (Array.isArray(dto.communityCircleSlugs)) {
+      await this.syncCommunityCircleMembership(id, dto.communityCircleSlugs);
+      user = await this.userModel.findById(id).lean();
+      if (!user) throw new NotFoundException('Member not found.');
+    }
+
     return this.toDashboardUser(this.sanitize(user));
+  }
+
+  private async syncCommunityCircleMembership(userId: string, slugs: string[]) {
+    if (!Types.ObjectId.isValid(userId)) return;
+
+    const cleanSlugs = Array.from(
+      new Set(slugs.map((slug) => slug.trim().toLowerCase()).filter(Boolean)),
+    ).slice(0, 12);
+
+    if (!cleanSlugs.length) return;
+
+    const memberId = new Types.ObjectId(userId);
+    const groups = await this.groupModel.find({ slug: { $in: cleanSlugs } });
+
+    await Promise.all(groups.map(async (group) => {
+      const isMember = group.members.some((id) => id.toString() === userId);
+      const isPending = group.pendingMembers.some((id) => id.toString() === userId);
+
+      if (isMember || isPending) return;
+
+      if (group.privacy === 'private') {
+        group.pendingMembers.push(memberId);
+        await group.save();
+        return;
+      }
+
+      group.members.push(memberId);
+      group.membersCount = group.members.length;
+      await group.save();
+      await this.userModel.findByIdAndUpdate(userId, { $addToSet: { groups: group._id } });
+    }));
   }
 
   async markVerified(email: string) {
@@ -217,6 +344,17 @@ export class UsersService {
       email: user.email,
       lastActiveText: user.status || 'active now',
       bio: user.bio || '',
+      address: user.location || '',
+      profileVisibility: user.profileVisibility || 'public',
+      profileTags: user.profileTags || [],
+      hobbies: user.hobbies || [],
+      maritalStatus: user.maritalStatus || '',
+      personalQuestion: user.personalQuestion || '',
+      blogCategoryInterests: user.blogCategoryInterests || [],
+      blogCategoryReason: user.blogCategoryReason || '',
+      productCategoryInterests: user.productCategoryInterests || [],
+      productCategoryReason: user.productCategoryReason || '',
+      communityCircleSlugs: user.communityCircleSlugs || [],
       avatarUrl: this.imageOrDefault(user.avatar, DEFAULT_USER_AVATAR),
       coverImageUrl: this.imageOrDefault(user.cover, DEFAULT_USER_COVER),
       interests: user.interests || [],
