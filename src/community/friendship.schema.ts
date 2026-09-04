@@ -16,3 +16,7 @@ export class Friendship {
 }
 
 export const FriendshipSchema = SchemaFactory.createForClass(Friendship);
+
+FriendshipSchema.index({ requesterId: 1, addresseeId: 1, status: 1 });
+FriendshipSchema.index({ requesterId: 1, status: 1 });
+FriendshipSchema.index({ addresseeId: 1, status: 1 });

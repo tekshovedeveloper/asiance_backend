@@ -208,6 +208,16 @@ export class CheckoutDto {
   @IsString()
   paymentMethod?: string;
 
+  /*
+  |--------------------------------------------------------------------------
+  | CHECKOUT ORIGIN
+  |--------------------------------------------------------------------------
+  */
+
+  @IsOptional()
+  @IsString()
+  origin?: string;
+
   @IsOptional()
   @IsNumber()
   shipping?: number;
