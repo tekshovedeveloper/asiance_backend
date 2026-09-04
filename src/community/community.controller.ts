@@ -15,6 +15,9 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+import {
+  OptionalJwtGuard,
+} from '../common/guards/optional-jwt.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -163,10 +166,16 @@ export class CommunityController {
 
   // ─── Activity ────────────────────────────────────────────────────────────────
 
-  @Get('activity')
-  activity() {
-    return this.community.listActivity();
-  }
+@Get('activity')
+@UseGuards(OptionalJwtGuard)
+activity(
+  @CurrentUser()
+  user: any,
+) {
+  return this.community.listActivity(
+    user?.id,
+  );
+}
 
   @Get('activity/mine')
   @UseGuards(AuthGuard('jwt'))

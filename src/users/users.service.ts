@@ -189,6 +189,37 @@ export class UsersService {
     return handle;
   }
 
+  private uniqueFriendIds(friendships: Array<{ requesterId: any; addresseeId: any }>, memberId: any) {
+    const currentId = memberId.toString();
+    const seen = new Set<string>();
+    const friendIds: Types.ObjectId[] = [];
+
+    for (const friendship of friendships) {
+      const friendId =
+        friendship.requesterId.toString() === currentId
+          ? friendship.addresseeId
+          : friendship.requesterId;
+      const key = friendId.toString();
+
+      if (!seen.has(key)) {
+        seen.add(key);
+        friendIds.push(friendId);
+      }
+    }
+
+    return friendIds;
+  }
+
+  private async getAcceptedFriendIds(memberId: any) {
+    const uid = new Types.ObjectId(memberId);
+    const friendships = await this.friendshipModel.find({
+      status: 'accepted',
+      $or: [{ requesterId: uid }, { addresseeId: uid }],
+    }).lean();
+
+    return this.uniqueFriendIds(friendships, uid);
+  }
+
 
 
 
@@ -368,12 +399,9 @@ export class UsersService {
     };
   }
 
-  private countAcceptedFriends(userId: any) {
-    const uid = new Types.ObjectId(userId);
-    return this.friendshipModel.countDocuments({
-      status: 'accepted',
-      $or: [{ requesterId: uid }, { addresseeId: uid }],
-    });
+  private async countAcceptedFriends(userId: any) {
+    const friendIds = await this.getAcceptedFriendIds(userId);
+    return friendIds.length;
   }
 
   async listPublicFriendsByHandle(handle: string) {
@@ -384,19 +412,8 @@ export class UsersService {
 
     if (!member.showFriends) return [];
 
-    const memberId = member._id;
-    const friendships = await this.friendshipModel.find({
-      status: 'accepted',
-      $or: [{ requesterId: memberId }, { addresseeId: memberId }],
-    }).lean();
-
-    if (!friendships.length) return [];
-
-    const friendIds = friendships.map((friendship) =>
-      friendship.requesterId.toString() === memberId.toString()
-        ? friendship.addresseeId
-        : friendship.requesterId,
-    );
+    const friendIds = await this.getAcceptedFriendIds(member._id);
+    if (!friendIds.length) return [];
 
     const users = await this.userModel.find({ _id: { $in: friendIds } }).lean();
     return users.map((user: any) => ({

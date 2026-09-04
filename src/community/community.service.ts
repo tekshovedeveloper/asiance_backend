@@ -1,4 +1,4 @@
-import { ForbiddenException, Inject, Injectable, NotFoundException, forwardRef } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException, forwardRef } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { slugify } from '../common/slug';
@@ -32,6 +32,51 @@ export class CommunityService {
     @InjectModel(PostMedia.name) private readonly postMediaModel: Model<PostMediaDocument>,
     @Inject(forwardRef(() => ChatGateway)) private readonly chatGateway: ChatGateway,
   ) {}
+
+  private toObjectId(value: string, message = 'Member not found.') {
+    if (!Types.ObjectId.isValid(value)) {
+      throw new NotFoundException(message);
+    }
+
+    return new Types.ObjectId(value);
+  }
+
+  private friendshipPairFilter(leftId: Types.ObjectId, rightId: Types.ObjectId, extra: Record<string, any> = {}) {
+    return {
+      ...extra,
+      $or: [
+        { requesterId: leftId, addresseeId: rightId },
+        { requesterId: rightId, addresseeId: leftId },
+      ],
+    };
+  }
+
+  private uniqueFriendIds(friendships: Array<{ requesterId: any; addresseeId: any }>, userId: string) {
+    const seen = new Set<string>();
+    const friendIds: Types.ObjectId[] = [];
+
+    for (const friendship of friendships) {
+      const requesterId = friendship.requesterId.toString();
+      const addresseeId = friendship.addresseeId.toString();
+      const friendId = requesterId === userId ? friendship.addresseeId : friendship.requesterId;
+      const key = friendId.toString();
+
+      if (!seen.has(key)) {
+        seen.add(key);
+        friendIds.push(friendId);
+      }
+    }
+
+    return friendIds;
+  }
+
+  private async hasAcceptedFriendship(leftId: Types.ObjectId, rightId: Types.ObjectId) {
+    const friendship = await this.friendshipModel.exists(
+      this.friendshipPairFilter(leftId, rightId, { status: 'accepted' }),
+    );
+
+    return Boolean(friendship);
+  }
 
   // ─── Group Types ──────────────────────────────────────────────────────────────
 
@@ -255,20 +300,243 @@ export class CommunityService {
 
   // ─── Activity ─────────────────────────────────────────────────────────────────
 
-  async listActivity() {
-    // Only return non-group-scoped activity in the global feed
-    const items = await this.activityModel
-      .find({ $or: [{ groupSlug: '' }, { groupSlug: { $exists: false } }] })
-      .sort({ createdAt: -1 })
+async listActivity(
+  userId?: string,
+) {
+  /*
+  |--------------------------------------------------------------------------
+  | GLOBAL ACTIVITY ONLY
+  |--------------------------------------------------------------------------
+  */
+
+  const globalFeed = {
+    $or: [
+      {
+        groupSlug: '',
+      },
+
+      {
+        groupSlug: {
+          $exists: false,
+        },
+      },
+    ],
+  };
+
+  /*
+  |--------------------------------------------------------------------------
+  | LOGGED OUT
+  |--------------------------------------------------------------------------
+  |
+  | Website visitors who are not logged in only see public posts.
+  |
+  */
+
+  if (!userId) {
+    const items =
+      await this.activityModel
+        .find({
+          $and: [
+            globalFeed,
+
+            {
+              $or: [
+                {
+                  privacy:
+                    'public',
+                },
+
+                {
+                  privacy: {
+                    $exists:
+                      false,
+                  },
+                },
+              ],
+            },
+          ],
+        })
+        .sort({
+          createdAt:
+            -1,
+        })
+        .limit(80)
+        .lean();
+
+    return items.map(
+      item => ({
+        ...item,
+
+        likes:
+          Math.max(
+            item.likes ??
+              0,
+            0,
+          ),
+
+        comments:
+          Math.max(
+            item.comments ??
+              0,
+            0,
+          ),
+      }),
+    );
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | CURRENT USER
+  |--------------------------------------------------------------------------
+  */
+
+  const viewerId =
+    new Types.ObjectId(
+      userId,
+    );
+
+  /*
+  |--------------------------------------------------------------------------
+  | FIND ACCEPTED FRIENDS
+  |--------------------------------------------------------------------------
+  */
+
+  const friendships =
+    await this.friendshipModel
+      .find({
+        status:
+          'accepted',
+
+        $or: [
+          {
+            requesterId:
+              viewerId,
+          },
+
+          {
+            addresseeId:
+              viewerId,
+          },
+        ],
+      })
+      .lean();
+
+  /*
+  |--------------------------------------------------------------------------
+  | FRIEND IDS
+  |--------------------------------------------------------------------------
+  */
+
+  const friendIds =
+    this.uniqueFriendIds(
+      friendships,
+      userId,
+    );
+
+  /*
+  |--------------------------------------------------------------------------
+  | POSTS CURRENT USER MAY SEE
+  |--------------------------------------------------------------------------
+  |
+  | PUBLIC
+  |   Everyone
+  |
+  | FRIENDS
+  |   Creator + accepted friends
+  |
+  | PRIVATE
+  |   Creator only
+  |
+  */
+
+  const items =
+    await this.activityModel
+      .find({
+        $and: [
+          globalFeed,
+
+          {
+            $or: [
+              /*
+              |--------------------------------------------------------------------------
+              | PUBLIC
+              |--------------------------------------------------------------------------
+              */
+
+              {
+                privacy:
+                  'public',
+              },
+
+              {
+                privacy: {
+                  $exists:
+                    false,
+                },
+              },
+
+              /*
+              |--------------------------------------------------------------------------
+              | OWN PRIVATE POSTS
+              |--------------------------------------------------------------------------
+              */
+
+              {
+                privacy:
+                  'private',
+
+                actorId:
+                  viewerId,
+              },
+
+              /*
+              |--------------------------------------------------------------------------
+              | FRIEND POSTS
+              |--------------------------------------------------------------------------
+              */
+
+              {
+                privacy:
+                  'friends',
+
+                actorId: {
+                  $in: [
+                    viewerId,
+                    ...friendIds,
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      })
+      .sort({
+        createdAt:
+          -1,
+      })
       .limit(80)
       .lean();
 
-    return items.map((item) => ({
+  return items.map(
+    item => ({
       ...item,
-      likes: Math.max(item.likes ?? 0, 0),
-      comments: Math.max(item.comments ?? 0, 0),
-    }));
-  }
+
+      likes:
+        Math.max(
+          item.likes ??
+            0,
+          0,
+        ),
+
+      comments:
+        Math.max(
+          item.comments ??
+            0,
+          0,
+        ),
+    }),
+  );
+}
 
   async listActivityByHandle(handle: string) {
     const items = await this.activityModel
@@ -614,16 +882,60 @@ export class CommunityService {
   }
 
   async sendFriendRequest(targetUserId: string, user: any) {
-    const uid = new Types.ObjectId(user.id);
-    const tid = new Types.ObjectId(targetUserId);
-    const existing = await this.friendshipModel.findOne({
-      $or: [
-        { requesterId: uid, addresseeId: tid },
-        { requesterId: tid, addresseeId: uid },
-      ],
-    });
+    const uid = this.toObjectId(user.id);
+    const tid = this.toObjectId(targetUserId);
 
-    if (existing) return existing;
+    if (uid.equals(tid)) {
+      throw new BadRequestException('You cannot send a friend request to yourself.');
+    }
+
+    const existing = await this.friendshipModel
+      .findOne(
+        this.friendshipPairFilter(uid, tid, {
+          status: { $in: ['pending', 'accepted'] },
+        }),
+      )
+      .sort({ createdAt: -1 });
+
+    if (existing) {
+      const isIncomingPending =
+        existing.status === 'pending' &&
+        existing.requesterId.toString() === tid.toString() &&
+        existing.addresseeId.toString() === uid.toString();
+
+      if (isIncomingPending) {
+        existing.status = 'accepted';
+        await existing.save();
+        await this.friendshipModel.deleteMany(
+          this.friendshipPairFilter(uid, tid, {
+            _id: { $ne: existing._id },
+            status: { $in: ['pending', 'rejected'] },
+          }),
+        );
+
+        try {
+          await this.notificationModel.create({
+            recipientId: existing.requesterId,
+            actorId: uid,
+            type: 'friend' as const,
+            message: `${user.name} accepted your friend request`,
+            link: `/members/${user.handle ?? ''}`,
+          });
+          this.chatGateway.emitToUser(existing.requesterId.toString(), 'notification', {
+            type: 'friend',
+            message: `${user.name} accepted your friend request`,
+            link: `/members/${user.handle ?? ''}`,
+            actorName: user.name,
+          });
+        } catch { /* notification failure must not roll back the accept */ }
+      }
+
+      return existing;
+    }
+
+    await this.friendshipModel.deleteMany(
+      this.friendshipPairFilter(uid, tid, { status: 'rejected' }),
+    );
 
     const friendship = await this.friendshipModel.create({ requesterId: uid, addresseeId: tid, status: 'pending' });
     await this.notificationModel.create({
@@ -648,9 +960,17 @@ export class CommunityService {
       { $match: { status: 'accepted' } },
       {
         $project: {
+          pairKey: {
+            $cond: [
+              { $lt: [{ $toString: '$requesterId' }, { $toString: '$addresseeId' }] },
+              { $concat: [{ $toString: '$requesterId' }, ':', { $toString: '$addresseeId' }] },
+              { $concat: [{ $toString: '$addresseeId' }, ':', { $toString: '$requesterId' }] },
+            ],
+          },
           users: ['$requesterId', '$addresseeId'],
         },
       },
+      { $group: { _id: '$pairKey', users: { $first: '$users' } } },
       { $unwind: '$users' },
       { $group: { _id: '$users', friendCount: { $sum: 1 } } },
       { $sort: { friendCount: -1 } },
@@ -679,7 +999,7 @@ export class CommunityService {
   }
 
   async listFriends(user: any) {
-    const uid = new Types.ObjectId(user.id);
+    const uid = this.toObjectId(user.id);
     const friendships = await this.friendshipModel.find({
       $or: [
         { requesterId: uid, status: 'accepted' },
@@ -689,9 +1009,7 @@ export class CommunityService {
 
     if (!friendships.length) return [];
 
-    const friendIds = friendships.map((f) =>
-      f.requesterId.toString() === user.id ? f.addresseeId : f.requesterId,
-    );
+    const friendIds = this.uniqueFriendIds(friendships, user.id);
 
     const users = await this.userModel.find({ _id: { $in: friendIds } }).lean();
     return users.map((u: any) => ({
@@ -705,13 +1023,18 @@ export class CommunityService {
   }
 
   async listFriendRequests(user: any) {
-    const uid = new Types.ObjectId(user.id);
+    const uid = this.toObjectId(user.id);
     const requests = await this.friendshipModel.find({ addresseeId: uid, status: 'pending' }).lean();
 
     const requesterIds = requests.map((r) => r.requesterId);
     const users = await this.userModel.find({ _id: { $in: requesterIds } }).lean();
+    const seen = new Set<string>();
 
-    return requests.map((r) => {
+    return requests.flatMap((r) => {
+      const requesterId = r.requesterId.toString();
+      if (seen.has(requesterId)) return [];
+      seen.add(requesterId);
+
       const requester = users.find((u: any) => u._id.toString() === r.requesterId.toString());
       return {
         friendshipId: r._id,
@@ -726,22 +1049,39 @@ export class CommunityService {
   }
 
   async cancelFriendRequest(targetUserId: string, user: any) {
-    const uid = new Types.ObjectId(user.id);
-    const tid = new Types.ObjectId(targetUserId);
-    await this.friendshipModel.deleteOne({ requesterId: uid, addresseeId: tid, status: 'pending' });
+    const uid = this.toObjectId(user.id);
+    const tid = this.toObjectId(targetUserId);
+
+    if (uid.equals(tid)) {
+      throw new BadRequestException('You cannot cancel a request to yourself.');
+    }
+
+    await this.friendshipModel.deleteMany({ requesterId: uid, addresseeId: tid, status: 'pending' });
     return { ok: true };
   }
 
   async listOutgoingRequests(user: any) {
-    const uid = new Types.ObjectId(user.id);
+    const uid = this.toObjectId(user.id);
     const requests = await this.friendshipModel.find({ requesterId: uid, status: 'pending' }).lean();
-    return requests.map((r) => ({
-      userId: r.addresseeId.toString(),
-      friendshipId: r._id.toString(),
-    }));
+    const seen = new Set<string>();
+
+    return requests.flatMap((r) => {
+      const userId = r.addresseeId.toString();
+      if (seen.has(userId)) return [];
+      seen.add(userId);
+
+      return {
+        userId: r.addresseeId.toString(),
+        friendshipId: r._id.toString(),
+      };
+    });
   }
 
   async acceptFriendRequest(friendshipId: string, user: any) {
+    if (!Types.ObjectId.isValid(friendshipId)) {
+      throw new NotFoundException('Friend request not found.');
+    }
+
     const friendship = await this.friendshipModel.findById(friendshipId);
     if (!friendship) throw new NotFoundException('Friend request not found.');
     if (friendship.status !== 'pending') throw new NotFoundException('Friend request already processed.');
@@ -749,8 +1089,31 @@ export class CommunityService {
       throw new ForbiddenException('You are not authorized to accept this request.');
     }
 
+    const existingAccepted = await this.friendshipModel.findOne(
+      this.friendshipPairFilter(friendship.requesterId, friendship.addresseeId, {
+        _id: { $ne: friendship._id },
+        status: 'accepted',
+      }),
+    );
+
+    if (existingAccepted) {
+      await this.friendshipModel.deleteMany(
+        this.friendshipPairFilter(friendship.requesterId, friendship.addresseeId, {
+          status: { $in: ['pending', 'rejected'] },
+        }),
+      );
+
+      return { status: 'accepted', _id: existingAccepted._id };
+    }
+
     friendship.status = 'accepted';
     await friendship.save();
+    await this.friendshipModel.deleteMany(
+      this.friendshipPairFilter(friendship.requesterId, friendship.addresseeId, {
+        _id: { $ne: friendship._id },
+        status: { $in: ['pending', 'rejected'] },
+      }),
+    );
 
     try {
       await this.notificationModel.create({
@@ -772,6 +1135,10 @@ export class CommunityService {
   }
 
   async rejectFriendRequest(friendshipId: string, user: any) {
+    if (!Types.ObjectId.isValid(friendshipId)) {
+      throw new NotFoundException('Friend request not found.');
+    }
+
     const friendship = await this.friendshipModel.findById(friendshipId);
     if (!friendship) throw new NotFoundException('Friend request not found.');
     if (friendship.status !== 'pending') throw new NotFoundException('Friend request already processed.');
@@ -784,13 +1151,18 @@ export class CommunityService {
   }
 
   async removeFriend(targetUserId: string, user: any) {
-    await this.friendshipModel.deleteOne({
-      $or: [
-        { requesterId: user.id, addresseeId: targetUserId, status: 'accepted' },
-        { requesterId: targetUserId, addresseeId: user.id, status: 'accepted' },
-      ],
-    });
-    return { ok: true };
+    const uid = this.toObjectId(user.id);
+    const tid = this.toObjectId(targetUserId);
+
+    if (uid.equals(tid)) {
+      throw new BadRequestException('You cannot unfriend yourself.');
+    }
+
+    const result = await this.friendshipModel.deleteMany(
+      this.friendshipPairFilter(uid, tid, { status: 'accepted' }),
+    );
+
+    return { ok: true, removed: result.deletedCount ?? 0 };
   }
 
   async listNotifications(user: any) {
@@ -851,15 +1223,12 @@ export class CommunityService {
   }
 
   async createOrGetThread(currentUser: any, otherUserId: string) {
-    const curId = new Types.ObjectId(currentUser.id);
-    const othId = new Types.ObjectId(otherUserId);
-    const friendship = await this.friendshipModel.findOne({
-      $or: [
-        { requesterId: curId, addresseeId: othId, status: 'accepted' },
-        { requesterId: othId, addresseeId: curId, status: 'accepted' },
-      ],
-    });
-    if (!friendship) throw new ForbiddenException('You must be friends to message this user.');
+    const curId = this.toObjectId(currentUser.id);
+    const othId = this.toObjectId(otherUserId);
+
+    if (!(await this.hasAcceptedFriendship(curId, othId))) {
+      throw new ForbiddenException('You must be friends to message this user.');
+    }
 
     const existing = await this.messageModel.findOne({
       $and: [
@@ -915,9 +1284,31 @@ export class CommunityService {
   }
 
   async sendMessage(threadId: string, dto: MessageDto, user: any) {
+    if (!Types.ObjectId.isValid(threadId)) {
+      throw new NotFoundException('Message thread not found.');
+    }
+
+    const currentUserId = this.toObjectId(user.id);
+    const thread = await this.messageModel
+      .findOne({
+        _id: new Types.ObjectId(threadId),
+        participants: currentUserId,
+      })
+      .lean();
+
+    if (!thread) throw new NotFoundException('Message thread not found.');
+
+    const otherParticipantId = (thread.participants as Types.ObjectId[]).find(
+      (p) => p.toString() !== user.id,
+    );
+
+    if (!otherParticipantId || !(await this.hasAcceptedFriendship(currentUserId, otherParticipantId))) {
+      throw new ForbiddenException('You must be friends to message this user.');
+    }
+
     const userDoc = await this.userModel.findById(user.id).lean();
     const message = {
-      senderId: new Types.ObjectId(user.id),
+      senderId: currentUserId,
       senderName: user.name ?? 'Member',
       senderAvatar: userDoc?.avatar ?? '',
       body: dto.body ?? '',
@@ -926,7 +1317,7 @@ export class CommunityService {
       createdAt: new Date(),
     };
 
-    const thread = await this.messageModel
+    const updatedThread = await this.messageModel
       .findByIdAndUpdate(
         threadId,
         {
@@ -937,11 +1328,7 @@ export class CommunityService {
       )
       .lean();
 
-    if (!thread) throw new NotFoundException('Message thread not found.');
-
-    const otherParticipantId = (thread.participants as Types.ObjectId[]).find(
-      (p) => p.toString() !== user.id,
-    );
+    if (!updatedThread) throw new NotFoundException('Message thread not found.');
 
     if (otherParticipantId) {
       await this.notificationModel.create({
@@ -960,7 +1347,7 @@ export class CommunityService {
       });
     }
 
-    return { thread, message };
+    return { thread: updatedThread, message };
   }
 
   async deleteMessage(threadId: string, messageId: string, userId: string) {

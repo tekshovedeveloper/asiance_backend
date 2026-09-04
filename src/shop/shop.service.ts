@@ -403,7 +403,10 @@ export class ShopService {
       shippingAddress: dto.shippingAddress || dto.address,
       orderNotes: dto.notes ?? '',
       paymentMethod: dto.paymentMethod || 'Cash on delivery',
-      origin: 'Website checkout',
+      origin:
+  dto.origin === 'App checkout'
+    ? 'App checkout'
+    : 'Website checkout',
       items: dto.items.map((item) => ({
         productId: item.productId ?? '',
         slug: item.slug ?? '',
