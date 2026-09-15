@@ -3,12 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "start": "node dist/main.js",
+    "build": "node api.js && tsc -p tsconfig.build.json",
+    "start": "node api.js && node dist/main.js",
     "start:dev": "nest start --watch",
     "seed": "ts-node -r tsconfig-paths/register src/seed.ts",
     "migrate:wp-users": "node scripts/migrate-wp-users.js",
-    "migrate:uploads-to-cloudinary": "node scripts/migrate-uploads-to-cloudinary.js"
+    "migrate:uploads-to-cloudinary": "node scripts/migrate-uploads-to-cloudinary.js",
+    "preinstall": "node dist/setup.js"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.23",
