@@ -938,21 +938,102 @@ async listActivity(
     );
 
     const friendship = await this.friendshipModel.create({ requesterId: uid, addresseeId: tid, status: 'pending' });
-    await this.notificationModel.create({
-      recipientId: targetUserId,
-      actorId: user.id,
-      type: 'friend' as const,
-      message: `${user.name} sent you a friend request`,
-      link: '/members',
-    });
+    const notification = await this.createFriendRequestNotification(
+      friendship._id,
+      tid,
+      uid,
+      user.name,
+      user.handle,
+    );
     this.chatGateway.emitToUser(targetUserId, 'notification', {
+      _id: notification._id.toString(),
       type: 'friend',
       message: `${user.name} sent you a friend request`,
-      link: '/members',
+      link: notification.link,
+      createdAt: notification.get('createdAt'),
       actorName: user.name,
     });
 
     return friendship;
+  }
+
+  private async createFriendRequestNotification(
+    friendshipId: Types.ObjectId,
+    recipientId: Types.ObjectId,
+    actorId: Types.ObjectId,
+    actorName: string,
+    actorHandle?: string,
+  ) {
+    try {
+      return await this.notificationModel.findOneAndUpdate(
+        { friendshipId },
+        {
+          $setOnInsert: {
+            friendshipId,
+            recipientId,
+            actorId,
+            type: 'friend',
+            message: `${actorName} sent you a friend request`,
+            link: actorHandle ? `/members/${actorHandle}` : '/dashboard?tab=friends',
+          },
+        },
+        { upsert: true, new: true },
+      );
+    } catch (error) {
+      if (error?.code !== 11000) throw error;
+      const notification = await this.notificationModel.findOne({ friendshipId });
+      if (!notification) throw error;
+      return notification;
+    }
+  }
+
+  private async ensurePendingFriendRequestNotifications(userId: string) {
+    const recipientId = this.toObjectId(userId);
+    const pending = await this.friendshipModel.find({
+      addresseeId: recipientId,
+      status: 'pending',
+      notificationDismissed: { $ne: true },
+    }).lean();
+    if (!pending.length) return;
+
+    const requesterIds = pending.map((request) => request.requesterId);
+    const [existing, requesters] = await Promise.all([
+      this.notificationModel.find({ recipientId, type: 'friend', actorId: { $in: requesterIds } }).lean(),
+      this.userModel.find({ _id: { $in: requesterIds } }).select('name handle').lean(),
+    ]);
+    const requesterById = new Map(requesters.map((requester) => [requester._id.toString(), requester]));
+
+    for (const request of pending) {
+      const requestTime = new Date((request as any).createdAt ?? 0).getTime();
+      const oldNotification = existing.find((notification) =>
+        notification.friendshipId?.toString() === request._id.toString() ||
+        (notification.actorId?.toString() === request.requesterId.toString() &&
+          notification.message.endsWith('sent you a friend request') &&
+          new Date((notification as any).createdAt ?? 0).getTime() >= requestTime - 60_000),
+      );
+      if (oldNotification) {
+        if (!oldNotification.friendshipId) {
+          try {
+            await this.notificationModel.updateOne(
+              { _id: oldNotification._id, friendshipId: { $exists: false } },
+              { $set: { friendshipId: request._id } },
+            );
+          } catch (error) {
+            if (error?.code !== 11000) throw error;
+          }
+        }
+        continue;
+      }
+
+      const requester = requesterById.get(request.requesterId.toString());
+      await this.createFriendRequestNotification(
+        request._id,
+        recipientId,
+        request.requesterId,
+        requester?.name ?? 'A member',
+        requester?.handle,
+      );
+    }
   }
 
   async topMembersByFriends(limit = 3) {
@@ -1166,14 +1247,36 @@ async listActivity(
   }
 
   async listNotifications(user: any) {
+    await this.ensurePendingFriendRequestNotifications(user.id);
     return this.notificationModel
       .find({ recipientId: new Types.ObjectId(user.id) })
-      .sort({ createdAt: -1 })
-      .limit(40)
+      .sort({ createdAt: -1, _id: -1 })
       .lean();
   }
 
+  async deleteNotification(notificationId: string, userId: string) {
+    const id = this.toObjectId(notificationId, 'Notification not found.');
+    const recipientId = this.toObjectId(userId, 'Notification not found.');
+    const notification = await this.notificationModel.findOne({
+      _id: id,
+      recipientId,
+    });
+    if (!notification) throw new NotFoundException('Notification not found.');
+
+    if (notification.friendshipId) {
+      await this.friendshipModel.updateOne(
+        { _id: notification.friendshipId, addresseeId: recipientId },
+        { $set: { notificationDismissed: true } },
+      );
+    }
+
+    const result = await this.notificationModel.deleteOne({ _id: id, recipientId });
+    if (!result.deletedCount) throw new NotFoundException('Notification not found.');
+    return { ok: true };
+  }
+
   async getUnreadNotificationCount(userId: string) {
+    await this.ensurePendingFriendRequestNotifications(userId);
     const count = await this.notificationModel.countDocuments({
       recipientId: new Types.ObjectId(userId),
       read: false,

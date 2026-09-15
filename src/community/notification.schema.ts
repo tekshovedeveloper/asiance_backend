@@ -11,6 +11,9 @@ export class Notification {
   @Prop({ type: Types.ObjectId, ref: 'User', default: null })
   actorId?: Types.ObjectId;
 
+  @Prop({ type: Types.ObjectId, ref: 'Friendship' })
+  friendshipId?: Types.ObjectId;
+
   @Prop({ required: true })
   type: 'like' | 'comment' | 'mention' | 'share' | 'friend' | 'group' | 'reaction' | 'message';
 
@@ -25,3 +28,5 @@ export class Notification {
 }
 
 export const NotificationSchema = SchemaFactory.createForClass(Notification);
+
+NotificationSchema.index({ friendshipId: 1 }, { unique: true, sparse: true });

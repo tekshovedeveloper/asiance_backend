@@ -13,6 +13,9 @@ export class Friendship {
 
   @Prop({ enum: ['pending', 'accepted', 'rejected'], default: 'pending' })
   status: 'pending' | 'accepted' | 'rejected';
+
+  @Prop({ default: false })
+  notificationDismissed: boolean;
 }
 
 export const FriendshipSchema = SchemaFactory.createForClass(Friendship);

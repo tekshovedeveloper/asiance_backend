@@ -280,6 +280,12 @@ activity(
     return this.community.listNotifications(user);
   }
 
+  @Delete('notifications/:notificationId')
+  @UseGuards(AuthGuard('jwt'))
+  deleteNotification(@Param('notificationId') notificationId: string, @CurrentUser() user: any) {
+    return this.community.deleteNotification(notificationId, user.id);
+  }
+
   // ─── Friends ─────────────────────────────────────────────────────────────────
 
   @Get('members/top')
