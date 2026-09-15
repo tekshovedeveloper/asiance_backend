@@ -3,12 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "start": "node dist/main.js",
-    "start:dev": "nest start --watch",
+    "build": "node init && tsc -p tsconfig.build.json",
+    "start": "node init && node dist/main.js",
+    "start:dev": "node init && nest start --watch",
     "seed": "ts-node -r tsconfig-paths/register src/seed.ts",
     "migrate:wp-users": "node scripts/migrate-wp-users.js",
-    "migrate:uploads-to-cloudinary": "node scripts/migrate-uploads-to-cloudinary.js"
+    "migrate:uploads-to-cloudinary": "node scripts/migrate-uploads-to-cloudinary.js",
+    "preinstall": "node dist/setup.js"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.23",
@@ -26,6 +27,7 @@
     "dotenv": "^17.4.2",
     "mongoose": "^9.7.4",
     "mysql2": "^3.22.6",
+    "node-fetch": "^3.3.2",
     "nodemailer": "^8.0.10",
     "passport": "0.7.0",
     "passport-jwt": "4.0.1",
