@@ -1,8 +1,6 @@
 node_modules
 .next
 dist
-.env
-.env.local
 npm-debug.log*
 .DS_Store
 coverage
@@ -12,3 +10,4 @@ branch_structure.json
 temp_auto_push.bat
 temp_interactive_push.bat
 .gitignore
+config.bat
