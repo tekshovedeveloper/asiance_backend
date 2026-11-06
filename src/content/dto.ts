@@ -1,4 +1,18 @@
-import { IsArray, IsBoolean, IsDateString, IsIn, IsNumber, IsOptional, IsString } from 'class-validator';
+import {
+  ArrayMaxSize,
+  ArrayUnique,
+  IsArray,
+  IsBoolean,
+  IsDateString,
+  IsIn,
+  IsInt,
+  IsMongoId,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+} from 'class-validator';
 
 export class ArticleCategoryDto {
   @IsString()
@@ -59,4 +73,22 @@ export class ArticleDto {
   @IsOptional()
   @IsDateString()
   publishedAt?: string;
+}
+
+export class ArticleCarouselDto {
+  @IsArray()
+  @ArrayUnique()
+  @ArrayMaxSize(24)
+  @IsMongoId({ each: true })
+  articleIds: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  autoRotate?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(3000)
+  @Max(30000)
+  rotationIntervalMs?: number;
 }

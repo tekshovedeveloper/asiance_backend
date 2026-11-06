@@ -1,10 +1,10 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { ContentService } from './content.service';
-import { ArticleCategoryDto, ArticleDto } from './dto';
+import { ArticleCarouselDto, ArticleCategoryDto, ArticleDto } from './dto';
 
 @Controller('articles')
 export class ContentController {
@@ -31,6 +31,18 @@ export class ContentController {
   @Get('categories')
   listCategories() {
     return this.content.listCategories();
+  }
+
+  @Get('carousels/:section')
+  getCarousel(@Param('section') section: string) {
+    return this.content.getCarousel(section);
+  }
+
+  @Put('admin/carousels/:section')
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles('admin')
+  updateCarousel(@Param('section') section: string, @Body() dto: ArticleCarouselDto) {
+    return this.content.updateCarousel(section, dto);
   }
 
   @Post('categories')
@@ -70,6 +82,18 @@ export class ContentController {
   @UseGuards(AuthGuard('jwt'))
   submit(@CurrentUser() user: any, @Body() dto: ArticleDto) {
     return this.content.submit(dto, user);
+  }
+
+  @Patch('me/:slug')
+  @UseGuards(AuthGuard('jwt'))
+  updateMine(@CurrentUser() user: any, @Param('slug') slug: string, @Body() dto: Partial<ArticleDto>) {
+    return this.content.updateMine(slug, dto, user.id);
+  }
+
+  @Delete('me/:slug')
+  @UseGuards(AuthGuard('jwt'))
+  removeMine(@CurrentUser() user: any, @Param('slug') slug: string) {
+    return this.content.removeMine(slug, user.id);
   }
 
   @Patch(':slug/approve')

@@ -4,15 +4,99 @@ import { Model, Types } from 'mongoose';
 import { slugify } from '../common/slug';
 import { ArticleCategory, ArticleCategoryDocument } from './article-category.schema';
 import { Article, ArticleDocument } from './article.schema';
+import { ArticleCarousel, ArticleCarouselDocument } from './article-carousel.schema';
 import { DEFAULT_ARTICLE_CATEGORIES } from './defaults';
-import { ArticleCategoryDto, ArticleDto } from './dto';
+import { ArticleCarouselDto, ArticleCategoryDto, ArticleDto } from './dto';
+
+const ARTICLE_CAROUSEL_SECTIONS = new Set([
+  'home',
+  'beauty',
+  'tech',
+  'fashion',
+  'lifestyle',
+  'baby',
+  'kids',
+  'wedding',
+  'dating',
+  'travel',
+]);
 
 @Injectable()
 export class ContentService {
   constructor(
     @InjectModel(Article.name) private readonly articleModel: Model<ArticleDocument>,
     @InjectModel(ArticleCategory.name) private readonly categoryModel: Model<ArticleCategoryDocument>,
+    @InjectModel(ArticleCarousel.name) private readonly carouselModel: Model<ArticleCarouselDocument>,
   ) {}
+
+  async getCarousel(sectionValue: string) {
+    const section = this.normalizeCarouselSection(sectionValue);
+    const carousel = await this.carouselModel.findOne({ section }).lean();
+
+    if (!carousel) {
+      return {
+        section,
+        articleIds: [],
+        articles: [],
+        autoRotate: true,
+        rotationIntervalMs: 6000,
+      };
+    }
+
+    const articleIds = (carousel.articleIds ?? []).map((id) => String(id));
+    const articles = await this.articleModel
+      .find({
+        _id: { $in: carousel.articleIds ?? [] },
+        $and: [
+          { $or: [{ status: { $exists: false } }, { status: 'published' }] },
+          { $or: [{ publishedAt: { $exists: false } }, { publishedAt: { $lte: new Date() } }] },
+        ],
+      })
+      .lean();
+    const articlesById = new Map(articles.map((article) => [String(article._id), article]));
+    const publishedArticleIds = articleIds.filter((id) => articlesById.has(id));
+
+    return {
+      section,
+      articleIds: publishedArticleIds,
+      articles: publishedArticleIds.map((id) => articlesById.get(id)),
+      autoRotate: carousel.autoRotate !== false,
+      rotationIntervalMs: carousel.rotationIntervalMs ?? 6000,
+    };
+  }
+
+  async updateCarousel(sectionValue: string, dto: ArticleCarouselDto) {
+    const section = this.normalizeCarouselSection(sectionValue);
+    const articleIds = dto.articleIds.map((id) => new Types.ObjectId(id));
+    const availableArticles = await this.articleModel
+      .find({
+        _id: { $in: articleIds },
+        $and: [
+          { $or: [{ status: { $exists: false } }, { status: 'published' }] },
+          { $or: [{ publishedAt: { $exists: false } }, { publishedAt: { $lte: new Date() } }] },
+        ],
+      })
+      .select('_id')
+      .lean();
+
+    if (availableArticles.length !== articleIds.length) {
+      throw new BadRequestException('Only currently published articles can be added to a carousel.');
+    }
+
+    await this.carouselModel.findOneAndUpdate(
+      { section },
+      {
+        $set: {
+          articleIds,
+          autoRotate: dto.autoRotate ?? true,
+          rotationIntervalMs: dto.rotationIntervalMs ?? 6000,
+        },
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
+
+    return this.getCarousel(section);
+  }
 
   async list(options: { category?: string; q?: string; includeDrafts?: boolean; status?: string } = {}) {
     const query: any = {};
@@ -138,6 +222,7 @@ export class ContentService {
 
   async submit(dto: ArticleDto, user: { id: string; name: string; handle?: string }) {
     const slug = await this.uniqueSlug(dto.slug || dto.title);
+    const status = dto.status === 'draft' ? 'draft' : 'pending';
 
     return this.articleModel.create({
       ...dto,
@@ -146,11 +231,67 @@ export class ContentService {
       authorName: user.name || dto.authorName || 'Member',
       authorHandle: user.handle || '',
       featured: Boolean(dto.featured),
-      status: 'pending',
-      submittedAt: new Date(),
+      status,
+      submittedAt: status === 'pending' ? new Date() : null,
       approvedAt: null,
       publishedAt: new Date(),
     });
+  }
+
+  async updateMine(slug: string, dto: Partial<ArticleDto>, userId: string) {
+    const authorId = Types.ObjectId.isValid(userId) ? new Types.ObjectId(userId) : userId;
+    const existing = await this.articleModel.findOne({ slug, authorId });
+    if (!existing) {
+      throw new NotFoundException('Article not found.');
+    }
+
+    const keepAsDraft = existing.status === 'draft' && dto.status === 'draft';
+    const nextStatus: 'draft' | 'pending' = keepAsDraft ? 'draft' : 'pending';
+    const update: Partial<Article> & { slug?: string } = {
+      status: nextStatus,
+      submittedAt: nextStatus === 'pending' ? new Date() : undefined,
+      approvedAt: undefined,
+    };
+
+    if (dto.title !== undefined) update.title = dto.title;
+    if (dto.category !== undefined) update.category = dto.category;
+    if (dto.excerpt !== undefined) update.excerpt = dto.excerpt;
+    if (dto.content !== undefined) update.content = dto.content;
+    if (dto.image !== undefined) update.image = dto.image;
+    if (dto.tags !== undefined) update.tags = dto.tags;
+    if (dto.featured !== undefined) update.featured = dto.featured;
+
+    if (dto.slug || dto.title) {
+      update.slug = await this.uniqueSlug(dto.slug || dto.title || existing.title, existing._id);
+    }
+
+    const article = await this.articleModel.findByIdAndUpdate(
+      existing._id,
+      {
+        $set: {
+          ...update,
+          approvedAt: null,
+          submittedAt: nextStatus === 'pending' ? new Date() : null,
+        },
+      },
+      { new: true },
+    ).lean();
+
+    if (!article) {
+      throw new NotFoundException('Article not found.');
+    }
+
+    return article;
+  }
+
+  async removeMine(slug: string, userId: string) {
+    const authorId = Types.ObjectId.isValid(userId) ? new Types.ObjectId(userId) : userId;
+    const result = await this.articleModel.findOneAndDelete({ slug, authorId }).lean();
+    if (!result) {
+      throw new NotFoundException('Article not found.');
+    }
+    await this.carouselModel.updateMany({}, { $pull: { articleIds: result._id } });
+    return { deleted: true };
   }
 
   async update(slug: string, dto: Partial<ArticleDto>) {
@@ -219,6 +360,7 @@ export class ContentService {
     if (!result) {
       throw new NotFoundException('Article not found.');
     }
+    await this.carouselModel.updateMany({}, { $pull: { articleIds: result._id } });
     return { deleted: true };
   }
 
@@ -251,6 +393,14 @@ export class ContentService {
       },
       { $set: { featured: false } },
     );
+  }
+
+  private normalizeCarouselSection(value: string) {
+    const section = slugify(value);
+    if (!ARTICLE_CAROUSEL_SECTIONS.has(section)) {
+      throw new BadRequestException('Unsupported article carousel section.');
+    }
+    return section;
   }
 
   private async ensureDefaultCategories() {

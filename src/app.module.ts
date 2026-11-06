@@ -12,6 +12,7 @@ import { ShippingModule } from './shipping/shipping.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { ContactModule } from './contact/contact.module';
 import { HomeSliderModule } from './home-slider/home-slider.module';
+import { SearchModule } from './search/search.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { HomeSliderModule } from './home-slider/home-slider.module';
     UploadsModule,
     ContactModule,
     HomeSliderModule,
+    SearchModule,
   ],
 })
 export class AppModule {}

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ArticleCategory, ArticleCategorySchema } from './article-category.schema';
 import { Article, ArticleSchema } from './article.schema';
+import { ArticleCarousel, ArticleCarouselSchema } from './article-carousel.schema';
 import { ContentController } from './content.controller';
 import { ContentService } from './content.service';
 
@@ -9,6 +10,7 @@ import { ContentService } from './content.service';
   imports: [
     MongooseModule.forFeature([
       { name: Article.name, schema: ArticleSchema },
+      { name: ArticleCarousel.name, schema: ArticleCarouselSchema },
       { name: ArticleCategory.name, schema: ArticleCategorySchema },
     ]),
   ],
